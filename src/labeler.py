@@ -34,7 +34,7 @@ if not selected_folder:
 
 source_dir = Path(selected_folder)
 processed_dir = source_dir / "processed"
-progress_file = source_dir / ".shoe_labeler_progress.json"
+processed_dir.mkdir(exist_ok=True)
 
 
 # --------------------------------------------------
@@ -42,41 +42,36 @@ progress_file = source_dir / ".shoe_labeler_progress.json"
 # --------------------------------------------------
 
 images = [
-    file
-    for file in source_dir.iterdir()
+    file for file in source_dir.iterdir()
     if file.is_file()
     and file.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]
 ]
 
-images.sort(key=lambda file: file.name.lower())
+images.sort(key=lambda x: x.name.lower())
 
-print(f"Folder: {source_dir}")
-print(f"Images: {len(images)}")
+if not images:
+    print("Fotoğraf bulunamadı.")
+    root.destroy()
+    exit()
 
 
 # --------------------------------------------------
-# PROGRESS YÜKLE
+# PROGRESS DOSYASI
 # --------------------------------------------------
+
+progress_file = source_dir / ".shoe_labeler_progress.json"
 
 current_index = 0
 
 if progress_file.exists():
-
     try:
-        with open(progress_file, "r", encoding="utf-8") as file:
-            progress = json.load(file)
+        with open(progress_file, "r", encoding="utf-8") as f:
+            progress = json.load(f)
 
         current_index = progress.get("current_index", 0)
 
-        print(f"Resuming from image {current_index + 1}")
-
     except (json.JSONDecodeError, OSError):
-        print("Progress file could not be read. Starting from beginning.")
-
-
-# Eğer progress dosyası artık dataset'ten büyükse
-if current_index >= len(images):
-    current_index = 0
+        current_index = 0
 
 
 # --------------------------------------------------
@@ -84,8 +79,6 @@ if current_index >= len(images):
 # --------------------------------------------------
 
 selected_category = None
-
-# Undo için geçmiş
 history = []
 
 
@@ -94,55 +87,182 @@ history = []
 # --------------------------------------------------
 
 def save_progress():
-
-    progress = {
+    data = {
         "current_index": current_index
     }
 
-    with open(
-        progress_file,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            progress,
-            file,
-            indent=4
-        )
+    with open(progress_file, "w", encoding="utf-8") as f:
+        json.dump(data, f)
 
 
 # --------------------------------------------------
-# FOTOĞRAF GÖSTER
+# GUI
+# --------------------------------------------------
+
+root.deiconify()
+root.title("Shoe Labeler")
+root.geometry("1000x800")
+
+
+# --------------------------------------------------
+# BAŞLIK
+# --------------------------------------------------
+
+title_label = tk.Label(
+    root,
+    text="Shoe Image Labeler",
+    font=("Arial", 20, "bold")
+)
+
+title_label.pack(pady=(10, 5))
+
+
+# --------------------------------------------------
+# İLERLEME BİLGİSİ
+# --------------------------------------------------
+
+progress_label = tk.Label(
+    root,
+    text="",
+    font=("Arial", 13)
+)
+
+progress_label.pack(pady=5)
+
+
+# --------------------------------------------------
+# FOTOĞRAF
+# --------------------------------------------------
+
+image_label = tk.Label(root)
+image_label.pack(pady=10)
+
+
+# --------------------------------------------------
+# DURUM
+# --------------------------------------------------
+
+status_label = tk.Label(
+    root,
+    text="Kategori seç",
+    font=("Arial", 14, "bold")
+)
+
+status_label.pack(pady=5)
+
+
+# --------------------------------------------------
+# KATEGORİ BUTONLARI
+# --------------------------------------------------
+
+category_frame = tk.Frame(root)
+category_frame.pack(pady=5)
+
+category_buttons = {}
+
+categories = list(CATEGORY_STYLES.keys())
+
+for i, category in enumerate(categories, start=1):
+
+    button = tk.Button(
+        category_frame,
+        text=f"{i} - {category}",
+        width=15,
+        command=lambda c=category: select_category(c)
+    )
+
+    button.grid(
+        row=(i - 1) // 4,
+        column=(i - 1) % 4,
+        padx=4,
+        pady=4
+    )
+
+    category_buttons[category] = button
+
+
+# --------------------------------------------------
+# STİL BUTONLARI
+# --------------------------------------------------
+
+style_frame = tk.Frame(root)
+style_frame.pack(pady=5)
+
+style_buttons = []
+
+
+# --------------------------------------------------
+# KLAVYE BİLGİSİ
+# --------------------------------------------------
+
+shortcut_label = tk.Label(
+    root,
+    text="1-7: Kategori    |    Stil numarası: Stil seç    |    U: Geri al    |    S: Atla    |    ESC: Çıkış",
+    font=("Arial", 11)
+)
+
+shortcut_label.pack(pady=15)
+
+
+# --------------------------------------------------
+# İLERLEME GÜNCELLE
+# --------------------------------------------------
+
+def update_progress():
+
+    labeled = current_index
+    total = len(images)
+    remaining = total - current_index
+
+    if remaining < 0:
+        remaining = 0
+
+    progress_label.config(
+        text=f"Etiketlenen: {labeled}    |    Kalan: {remaining}    |    Toplam: {total}"
+    )
+
+
+# --------------------------------------------------
+# FOTOĞRAFI GÖSTER
 # --------------------------------------------------
 
 def show_image():
 
+    global current_index
+
+    update_progress()
+
     if current_index >= len(images):
+
+        image_label.config(image="")
+        image_label.image = None
+
+        status_label.config(
+            text="TÜM FOTOĞRAFLAR TAMAMLANDI!"
+        )
+
         return
 
-    file = images[current_index]
+    image_path = images[current_index]
 
     try:
-        image = Image.open(file)
-        image.thumbnail((800, 600))
+        image = Image.open(image_path)
+
+        image.thumbnail((800, 550))
 
         photo = ImageTk.PhotoImage(image)
 
         image_label.config(image=photo)
         image_label.image = photo
 
-        progress_label.config(
-            text=(
-                f"{current_index + 1} / {len(images)}\n"
-                f"{file.name}"
-            )
+        status_label.config(
+            text=f"{image_path.name}"
         )
 
-    except Exception as error:
+    except Exception as e:
 
-        progress_label.config(
-            text=f"Could not open: {file.name}\n{error}"
+        status_label.config(
+            text=f"Fotoğraf açılamadı: {e}"
         )
 
 
@@ -150,44 +270,44 @@ def show_image():
 # KATEGORİ SEÇ
 # --------------------------------------------------
 
-def choose_category(category):
+def select_category(category):
 
     global selected_category
 
     selected_category = category
 
-    category_label.config(
-        text=f"Kategori: {category}"
+    status_label.config(
+        text=f"{category} seçildi → stil seç"
     )
 
-    show_styles(category)
+    # Eski stil butonlarını temizle
+    for button in style_buttons:
+        button.destroy()
 
-
-# --------------------------------------------------
-# STİLLERİ GÖSTER
-# --------------------------------------------------
-
-def show_styles(category):
-
-    for widget in style_frame.winfo_children():
-        widget.destroy()
+    style_buttons.clear()
 
     styles = CATEGORY_STYLES[category]
 
-    for index, style in enumerate(styles, start=1):
+    for i, style in enumerate(styles, start=1):
 
         button = tk.Button(
             style_frame,
-            text=f"{index} - {style}",
-            width=20,
+            text=f"{i} - {style}",
+            width=15,
             command=lambda s=style: save_image(s)
         )
 
-        button.pack(pady=3)
+        button.grid(
+            row=0,
+            column=i - 1,
+            padx=4
+        )
+
+        style_buttons.append(button)
 
 
 # --------------------------------------------------
-# FOTOĞRAFI ETİKETLE
+# FOTOĞRAFI KAYDET
 # --------------------------------------------------
 
 def save_image(style):
@@ -195,39 +315,50 @@ def save_image(style):
     global current_index
     global selected_category
 
-    file = images[current_index]
+    if selected_category is None:
+        return
 
-    output_dir = (
+    image_path = images[current_index]
+
+    destination_dir = (
         processed_dir
         / selected_category
         / style
     )
 
-    output_dir.mkdir(
+    destination_dir.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    destination = output_dir / file.name
+    destination = destination_dir / image_path.name
 
-    # Eğer aynı dosya daha önce varsa üzerine yaz
     shutil.copy2(
-        file,
+        image_path,
         destination
     )
 
     # Undo için kaydet
-    history.append({
-        "index": current_index,
-        "destination": str(destination)
-    })
+    history.append(
+        {
+            "index": current_index,
+            "destination": str(destination)
+        }
+    )
 
     current_index += 1
+
     selected_category = None
 
     save_progress()
 
-    show_next_image()
+    # Stil butonlarını temizle
+    for button in style_buttons:
+        button.destroy()
+
+    style_buttons.clear()
+
+    show_image()
 
 
 # --------------------------------------------------
@@ -239,54 +370,31 @@ def skip_image():
     global current_index
     global selected_category
 
-    # Undo için skip işlemini de kaydet
-    history.append({
-        "index": current_index,
-        "destination": None
-    })
+    if current_index >= len(images):
+        return
+
+    history.append(
+        {
+            "index": current_index,
+            "destination": None
+        }
+    )
 
     current_index += 1
     selected_category = None
 
     save_progress()
 
-    show_next_image()
+    for button in style_buttons:
+        button.destroy()
 
-
-# --------------------------------------------------
-# SONRAKİ FOTOĞRAF
-# --------------------------------------------------
-
-def show_next_image():
-
-    if current_index >= len(images):
-
-        progress_label.config(
-            text="Dataset tamamlandı!"
-        )
-
-        image_label.config(image="")
-        category_label.config(
-            text="Dataset tamamlandı!"
-        )
-
-        for widget in style_frame.winfo_children():
-            widget.destroy()
-
-        return
-
-    category_label.config(
-        text="Kategori seç:"
-    )
-
-    for widget in style_frame.winfo_children():
-        widget.destroy()
+    style_buttons.clear()
 
     show_image()
 
 
 # --------------------------------------------------
-# UNDO
+# GERİ AL
 # --------------------------------------------------
 
 def undo():
@@ -295,187 +403,86 @@ def undo():
     global selected_category
 
     if not history:
+        status_label.config(
+            text="Geri alınacak işlem yok."
+        )
         return
 
     last_action = history.pop()
 
-    previous_index = last_action["index"]
+    current_index = last_action["index"]
+
     destination = last_action["destination"]
 
-    # Etiketlenmiş bir dosyaysa processed'dan sil
-    if destination is not None:
+    if destination:
 
         destination_path = Path(destination)
 
         if destination_path.exists():
             destination_path.unlink()
 
-    current_index = previous_index
     selected_category = None
 
     save_progress()
 
-    category_label.config(
-        text="Kategori seç:"
-    )
+    for button in style_buttons:
+        button.destroy()
 
-    for widget in style_frame.winfo_children():
-        widget.destroy()
+    style_buttons.clear()
 
     show_image()
 
 
 # --------------------------------------------------
-# KLAVYE KONTROLÜ
+# KLAVYE
 # --------------------------------------------------
 
 def key_pressed(event):
 
-    global selected_category
-
-    key = event.char.lower()
+    key = event.keysym.lower()
 
     # U = Undo
     if key == "u":
         undo()
-        return
 
     # S = Skip
-    if key == "s":
+    elif key == "s":
         skip_image()
-        return
 
-    # Kategori seçilmediyse
-    if selected_category is None:
+    # ESC = Çıkış
+    elif key == "escape":
+        save_progress()
+        root.destroy()
 
-        categories = list(CATEGORY_STYLES.keys())
+    # Eğer kategori seçilmişse:
+    # 1-4 artık stil seçmek için kullanılır
+    elif selected_category is not None and key in ["1", "2", "3", "4"]:
 
-        if key in "1234567":
+        number = int(key)
 
-            index = int(key) - 1
+        styles = CATEGORY_STYLES[selected_category]
 
-            if index < len(categories):
+        if number <= len(styles):
+            save_image(styles[number - 1])
 
-                choose_category(
-                    categories[index]
-                )
+    # Kategori henüz seçilmemişse:
+    # 1-7 kategori seçmek için kullanılır
+    elif selected_category is None and key in [
+        "1", "2", "3", "4", "5", "6", "7"
+    ]:
 
-    # Kategori seçildiyse
-    else:
+        number = int(key)
 
-        styles = CATEGORY_STYLES[
-            selected_category
-        ]
+        if number <= len(categories):
+            select_category(categories[number - 1])
 
-        if key.isdigit():
-
-            index = int(key) - 1
-
-            if index < len(styles):
-
-                save_image(
-                    styles[index]
-                )
+root.bind("<Key>", key_pressed)
 
 
 # --------------------------------------------------
-# PROGRAMDAN ÇIKIŞ
+# BAŞLAT
 # --------------------------------------------------
 
-def quit_program(event=None):
-
-    save_progress()
-    root.destroy()
-
-
-# --------------------------------------------------
-# GUI
-# --------------------------------------------------
-
-root.deiconify()
-
-root.title(
-    "Shoe Dataset Labeler"
-)
-
-root.geometry(
-    "1000x800"
-)
-
-
-image_label = tk.Label(root)
-image_label.pack(pady=10)
-
-
-progress_label = tk.Label(
-    root,
-    text="",
-    font=("Arial", 12)
-)
-
-progress_label.pack()
-
-
-category_label = tk.Label(
-    root,
-    text="Kategori seç:",
-    font=("Arial", 16)
-)
-
-category_label.pack(pady=10)
-
-
-category_frame = tk.Frame(root)
-category_frame.pack()
-
-
-# Kategori butonları
-
-for index, category in enumerate(
-    CATEGORY_STYLES,
-    start=1
-):
-
-    button = tk.Button(
-        category_frame,
-        text=f"{index} - {category}",
-        width=15,
-        command=lambda c=category:
-            choose_category(c)
-    )
-
-    button.pack(
-        side=tk.LEFT,
-        padx=3
-    )
-
-
-style_frame = tk.Frame(root)
-style_frame.pack(pady=20)
-
-
-# Klavye eventleri
-
-root.bind(
-    "<Key>",
-    key_pressed
-)
-
-root.bind(
-    "<Escape>",
-    quit_program
-)
-
-
-# İlk fotoğraf
-
-if images:
-    show_image()
-
-else:
-    progress_label.config(
-        text="Fotoğraf bulunamadı!"
-    )
-
+show_image()
 
 root.mainloop()
