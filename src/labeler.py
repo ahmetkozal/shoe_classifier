@@ -11,8 +11,9 @@ import json
 # --------------------------------------------------
 
 CATEGORY_STYLES = {
-    "terlik": ["klasik", "topuklu", "casual", "comfort"],
-    "sandalet": ["klasik", "topuklu", "casual", "comfort"],
+    "ayakkabi": ["klasik", "loafer", "casual", "comfort","topuklu"],
+    "terlik": ["klasik", "topuklu", "casual", "comfort","platform"],
+    "sandalet": ["klasik", "topuklu", "casual", "comfort","platform"],
     "basanojki": ["klasik", "topuklu", "comfort"],
     "tufli": ["klasik", "comfort", "topuklu"],
     "babet": ["klasik", "comfort", "casual"],
@@ -370,6 +371,8 @@ shortcut_label = tk.Label(
         "← →: Fotoğraf  |  "
         "U: Geri Al  |  "
         "S: Atla  |  "
+        "N: Sonraki Atlanan  |  "
+        "P: Önceki Atlanan  |  "
         "ESC: Çıkış"
     ),
     font=("Arial", 11, "bold")
@@ -950,6 +953,95 @@ def next_image():
 
     show_image()
 
+def find_skipped_index(start_index, direction):
+
+    index = start_index
+
+    while True:
+
+        index += direction
+
+        if index < 0 or index >= len(images):
+            return None
+
+        filename = images[index].name
+
+        state = image_states.get(
+            filename
+        )
+
+        if (
+            state
+            and state.get("action") == "skipped"
+        ):
+            return index
+
+def next_skipped():
+
+    global current_index
+    global selected_category
+
+    index = find_skipped_index(
+        current_index,
+        1
+    )
+
+    if index is None:
+
+        status_label.config(
+            text="Sonraki atlanmış fotoğraf bulunamadı."
+        )
+
+        return
+
+
+    current_index = index
+
+    selected_category = None
+
+
+    for button in style_buttons:
+
+        button.destroy()
+
+    style_buttons.clear()
+
+
+    show_image()
+
+def previous_skipped():
+
+    global current_index
+    global selected_category
+
+    index = find_skipped_index(
+        current_index,
+        -1
+    )
+
+    if index is None:
+
+        status_label.config(
+            text="Önceki atlanmış fotoğraf bulunamadı."
+        )
+
+        return
+
+
+    current_index = index
+
+    selected_category = None
+
+
+    for button in style_buttons:
+
+        button.destroy()
+
+    style_buttons.clear()
+
+
+    show_image()
+
 
 # --------------------------------------------------
 # GERİ AL
@@ -1124,6 +1216,14 @@ def key_pressed(event):
 
         skip_image()
 
+    elif key == "n":
+    
+            next_skipped()
+
+    elif key == "p":
+    
+            previous_skipped()
+
 
     # --------------------------------------------------
     # SOL OK = ÖNCEKİ
@@ -1165,7 +1265,8 @@ def key_pressed(event):
             "1",
             "2",
             "3",
-            "4"
+            "4",
+            "5"
         ]
     ):
 
