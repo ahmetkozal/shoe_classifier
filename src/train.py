@@ -1,7 +1,6 @@
-from pathlib import Path
-from collections import Counter
 import random
 import shutil
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -10,95 +9,85 @@ from torchvision import datasets, transforms, models
 
 
 # ============================================================
-# SETTINGS
+# AYARLAR
 # ============================================================
-
-MIN_IMAGES_PER_CLASS = 10
-
-TRAIN_RATIO = 0.70
-VAL_RATIO = 0.15
-TEST_RATIO = 0.15
-
-BATCH_SIZE = 16
-EPOCHS = 3
-
-LEARNING_RATE = 0.0001
-
-IMAGE_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp"
-}
 
 SEED = 42
 
+BATCH_SIZE = 16
+EPOCHS = 10
+LEARNING_RATE = 0.0001
+
+IMAGE_SIZE = 224
+
+VAL_RATIO = 0.15
+TEST_RATIO = 0.15
+
+MODEL_NAME = "shoe_classifier_v2.pth"
+
 
 # ============================================================
-# REPRODUCIBILITY
+# RANDOM SEED
 # ============================================================
 
 random.seed(SEED)
 torch.manual_seed(SEED)
 
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(SEED)
-
 
 # ============================================================
-# DEVICE
+# DATASET YOLU
 # ============================================================
 
-if torch.cuda.is_available():
+dataset_path = input(
+    "Dataset klasörünün yolunu gir: "
+).strip().strip('"')
 
-    device = torch.device("cuda")
+
+dataset_path = Path(dataset_path)
+
+
+if not dataset_path.exists():
 
     print()
-    print("CUDA available.")
-    print("Using GPU:", torch.cuda.get_device_name(0))
+    print("Dataset bulunamadı.")
 
-else:
-
-    device = torch.device("cpu")
-
-    print()
-    print("CUDA not available.")
-    print("Using CPU.")
+    raise SystemExit
 
 
 # ============================================================
-# DATASET PATH
+# DATASET KLASÖRÜ
 # ============================================================
 
-source_dir = Path(
-    input("\nDataset klasörünün yolunu gir: ").strip()
-)
+train_dir = dataset_path / "_train"
+val_dir = dataset_path / "_val"
+test_dir = dataset_path / "_test"
 
-processed_dir = source_dir / "processed"
 
-if not processed_dir.exists():
+for directory in [
+    train_dir,
+    val_dir,
+    test_dir
+]:
 
-    print()
-    print("Hata: 'processed' klasörü bulunamadı.")
-    print()
-    exit()
+    if directory.exists():
+
+        shutil.rmtree(
+            directory
+        )
 
 
 # ============================================================
-# FIND CLASSES
+# SINIFLARI BUL
 # ============================================================
 
-print()
-print("Scanning dataset...")
-print("-" * 60)
+classes = []
 
-
-class_images = {}
-
-
-for category_dir in processed_dir.iterdir():
+for category_dir in dataset_path.iterdir():
 
     if not category_dir.is_dir():
+        continue
+
+    if category_dir.name.startswith("_"):
         continue
 
     for style_dir in category_dir.iterdir():
@@ -106,238 +95,220 @@ for category_dir in processed_dir.iterdir():
         if not style_dir.is_dir():
             continue
 
-        class_name = f"{category_dir.name}_{style_dir.name}"
+        label = (
+            f"{category_dir.name}_"
+            f"{style_dir.name}"
+        )
 
-        images = []
-
-        for image_path in style_dir.iterdir():
-
-            if not image_path.is_file():
-                continue
-
-            if image_path.suffix.lower() not in IMAGE_EXTENSIONS:
-                continue
-
-            images.append(image_path)
-
-        class_images[class_name] = images
+        classes.append(
+            (
+                label,
+                style_dir
+            )
+        )
 
 
-# ============================================================
-# SHOW ORIGINAL DATASET
-# ============================================================
+classes.sort(
+    key=lambda x: x[0].lower()
+)
+
 
 print()
-print("Original classes:")
-print("-" * 60)
+print("=" * 60)
+print("CLASSES")
+print("=" * 60)
 
-for class_name in sorted(class_images):
+
+for label, path in classes:
 
     print(
-        f"{class_name:<35} "
-        f"{len(class_images[class_name])}"
+        f"{label:30s}"
+        f"{path}"
     )
 
 
 print()
-print("Total classes found:", len(class_images))
+print(
+    f"Total classes: {len(classes)}"
+)
 
 
 # ============================================================
-# FILTER SMALL CLASSES
+# DATASET SPLIT
 # ============================================================
 
-valid_classes = {}
-skipped_classes = {}
+print()
+print("=" * 60)
+print("DATASET SPLIT")
+print("=" * 60)
+print()
 
 
-for class_name, images in class_images.items():
+total_images = 0
 
-    if len(images) < MIN_IMAGES_PER_CLASS:
 
-        skipped_classes[class_name] = len(images)
+for label, source_dir in classes:
+
+    images = [
+        p
+        for p in source_dir.iterdir()
+        if p.is_file()
+        and p.suffix.lower() in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp"
+        }
+    ]
+
+
+    random.shuffle(
+        images
+    )
+
+
+    count = len(images)
+
+    total_images += count
+
+
+    # --------------------------------------------------------
+    # Split
+    # --------------------------------------------------------
+
+    if count >= 10:
+
+        test_count = max(
+            1,
+            int(count * TEST_RATIO)
+        )
+
+        val_count = max(
+            1,
+            int(count * VAL_RATIO)
+        )
+
+    elif count >= 3:
+
+        test_count = 1
+        val_count = 1
+
+    elif count == 2:
+
+        test_count = 1
+        val_count = 0
 
     else:
 
-        valid_classes[class_name] = images
+        test_count = 0
+        val_count = 0
 
 
-# ============================================================
-# SHOW SKIPPED CLASSES
-# ============================================================
+    train_count = (
+        count
+        - val_count
+        - test_count
+    )
 
-print()
-print("=" * 60)
-print("SKIPPED CLASSES")
-print("=" * 60)
 
-if skipped_classes:
+    # --------------------------------------------------------
+    # Klasörler
+    # --------------------------------------------------------
 
-    for class_name in sorted(skipped_classes):
+    train_class_dir = (
+        train_dir
+        / label
+    )
 
-        print(
-            f"{class_name:<35} "
-            f"{skipped_classes[class_name]} images"
+    val_class_dir = (
+        val_dir
+        / label
+    )
+
+    test_class_dir = (
+        test_dir
+        / label
+    )
+
+
+    train_class_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    if val_count > 0:
+
+        val_class_dir.mkdir(
+            parents=True,
+            exist_ok=True
         )
 
-else:
+    if test_count > 0:
 
-    print("None")
+        test_class_dir.mkdir(
+            parents=True,
+            exist_ok=True
+        )
 
 
-# ============================================================
-# SHOW TRAINING CLASSES
-# ============================================================
+    # --------------------------------------------------------
+    # Dosyaları dağıt
+    # --------------------------------------------------------
 
-print()
-print("=" * 60)
-print("CLASSES USED FOR TRAINING")
-print("=" * 60)
+    test_images = (
+        images[:test_count]
+    )
 
-for class_name in sorted(valid_classes):
+    val_images = (
+        images[
+            test_count:
+            test_count + val_count
+        ]
+    )
+
+    train_images = (
+        images[
+            test_count + val_count:
+        ]
+    )
+
+
+    for image in train_images:
+
+        shutil.copy2(
+            image,
+            train_class_dir / image.name
+        )
+
+
+    for image in val_images:
+
+        shutil.copy2(
+            image,
+            val_class_dir / image.name
+        )
+
+
+    for image in test_images:
+
+        shutil.copy2(
+            image,
+            test_class_dir / image.name
+        )
+
 
     print(
-        f"{class_name:<35} "
-        f"{len(valid_classes[class_name])} images"
+        f"{label:30s}"
+        f"{len(train_images):4d} train   "
+        f"{len(val_images):4d} val   "
+        f"{len(test_images):4d} test"
     )
 
 
 print()
-print("Training classes:", len(valid_classes))
-
-
-# ============================================================
-# CHECK
-# ============================================================
-
-if len(valid_classes) < 2:
-
-    print()
-    print(
-        "Hata: Eğitim için en az 2 class gerekiyor."
-    )
-
-    exit()
-
-
-# ============================================================
-# CREATE TRAINING DATA FOLDER
-# ============================================================
-
-training_data_dir = source_dir / "training_data"
-
-
-if training_data_dir.exists():
-
-    print()
-    print("Existing training_data folder found.")
-    print("Removing it...")
-
-    shutil.rmtree(training_data_dir)
-
-
-train_dir = training_data_dir / "train"
-val_dir = training_data_dir / "val"
-test_dir = training_data_dir / "test"
-
-
-train_dir.mkdir(parents=True)
-val_dir.mkdir(parents=True)
-test_dir.mkdir(parents=True)
-
-
-# ============================================================
-# SPLIT DATASET
-# ============================================================
-
-print()
-print("=" * 60)
-print("CREATING TRAIN / VAL / TEST SPLIT")
-print("=" * 60)
-
-
-for class_name in sorted(valid_classes):
-
-    images = valid_classes[class_name].copy()
-
-    random.shuffle(images)
-
-    total = len(images)
-
-    # --------------------------------------------------------
-    # Small dataset handling
-    # --------------------------------------------------------
-
-    test_count = max(1, round(total * TEST_RATIO))
-    val_count = max(1, round(total * VAL_RATIO))
-
-    train_count = total - val_count - test_count
-
-    # Make sure at least one training image remains.
-    if train_count < 1:
-
-        train_count = 1
-
-        if val_count > 1:
-            val_count -= 1
-
-        elif test_count > 1:
-            test_count -= 1
-
-    train_images = images[:train_count]
-
-    val_images = images[
-        train_count:
-        train_count + val_count
-    ]
-
-    test_images = images[
-        train_count + val_count:
-    ]
-
-    # --------------------------------------------------------
-    # Destination directories
-    # --------------------------------------------------------
-
-    class_train_dir = train_dir / class_name
-    class_val_dir = val_dir / class_name
-    class_test_dir = test_dir / class_name
-
-    class_train_dir.mkdir(parents=True)
-    class_val_dir.mkdir(parents=True)
-    class_test_dir.mkdir(parents=True)
-
-    # --------------------------------------------------------
-    # Copy images
-    # --------------------------------------------------------
-
-    for image_path in train_images:
-
-        shutil.copy2(
-            image_path,
-            class_train_dir / image_path.name
-        )
-
-    for image_path in val_images:
-
-        shutil.copy2(
-            image_path,
-            class_val_dir / image_path.name
-        )
-
-    for image_path in test_images:
-
-        shutil.copy2(
-            image_path,
-            class_test_dir / image_path.name
-        )
-
-    print(
-        f"{class_name:<35} "
-        f"{len(train_images):>3} train   "
-        f"{len(val_images):>3} val   "
-        f"{len(test_images):>3} test"
-    )
+print(
+    f"Total images: {total_images}"
+)
 
 
 # ============================================================
@@ -345,12 +316,21 @@ for class_name in sorted(valid_classes):
 # ============================================================
 
 train_transform = transforms.Compose([
-
-    transforms.Resize((224, 224)),
+    transforms.Resize(
+        (IMAGE_SIZE, IMAGE_SIZE)
+    ),
 
     transforms.RandomHorizontalFlip(),
 
-    transforms.RandomRotation(10),
+    transforms.RandomRotation(
+        10
+    ),
+
+    transforms.ColorJitter(
+        brightness=0.2,
+        contrast=0.2,
+        saturation=0.2
+    ),
 
     transforms.ToTensor(),
 
@@ -360,6 +340,7 @@ train_transform = transforms.Compose([
             0.456,
             0.406
         ],
+
         std=[
             0.229,
             0.224,
@@ -370,8 +351,9 @@ train_transform = transforms.Compose([
 
 
 eval_transform = transforms.Compose([
-
-    transforms.Resize((224, 224)),
+    transforms.Resize(
+        (IMAGE_SIZE, IMAGE_SIZE)
+    ),
 
     transforms.ToTensor(),
 
@@ -381,6 +363,7 @@ eval_transform = transforms.Compose([
             0.456,
             0.406
         ],
+
         std=[
             0.229,
             0.224,
@@ -391,18 +374,26 @@ eval_transform = transforms.Compose([
 
 
 # ============================================================
-# LOAD DATASETS
+# DATASETS
 # ============================================================
+
+print()
+print("=" * 60)
+print("LOADING DATA")
+print("=" * 60)
+
 
 train_dataset = datasets.ImageFolder(
     train_dir,
     transform=train_transform
 )
 
+
 val_dataset = datasets.ImageFolder(
     val_dir,
     transform=eval_transform
 )
+
 
 test_dataset = datasets.ImageFolder(
     test_dir,
@@ -410,57 +401,63 @@ test_dataset = datasets.ImageFolder(
 )
 
 
+print(
+    f"Train: {len(train_dataset)}"
+)
+
+print(
+    f"Validation: {len(val_dataset)}"
+)
+
+print(
+    f"Test: {len(test_dataset)}"
+)
+
+print(
+    f"Classes: {len(train_dataset.classes)}"
+)
+
+
 # ============================================================
-# DATA LOADERS
+# DATALOADERS
 # ============================================================
 
 train_loader = DataLoader(
     train_dataset,
     batch_size=BATCH_SIZE,
-    shuffle=True,
-    num_workers=0
+    shuffle=True
 )
+
 
 val_loader = DataLoader(
     val_dataset,
     batch_size=BATCH_SIZE,
-    shuffle=False,
-    num_workers=0
+    shuffle=False
 )
+
 
 test_loader = DataLoader(
     test_dataset,
     batch_size=BATCH_SIZE,
-    shuffle=False,
-    num_workers=0
+    shuffle=False
 )
 
 
 # ============================================================
-# DATASET INFORMATION
+# DEVICE
 # ============================================================
 
-print()
-print("=" * 60)
-print("DATASET")
-print("=" * 60)
-
-print("Train images:", len(train_dataset))
-print("Validation images:", len(val_dataset))
-print("Test images:", len(test_dataset))
-
-print()
-print("Classes:")
-
-for index, class_name in enumerate(train_dataset.classes):
-
-    print(
-        f"{index:>2}  {class_name}"
-    )
+device = torch.device(
+    "cuda"
+    if torch.cuda.is_available()
+    else "cpu"
+)
 
 
 print()
-print("Total classes:", len(train_dataset.classes))
+print(
+    f"Device: {device}"
+)
 
 
 # ============================================================
@@ -473,156 +470,116 @@ print("LOADING MODEL")
 print("=" * 60)
 
 
-weights = models.ResNet18_Weights.DEFAULT
-
 model = models.resnet18(
-    weights=weights
+    weights=models.ResNet18_Weights.DEFAULT
 )
 
 
-# Replace final layer.
+num_classes = len(
+    train_dataset.classes
+)
 
-number_of_classes = len(train_dataset.classes)
 
 model.fc = nn.Linear(
     model.fc.in_features,
-    number_of_classes
+    num_classes
 )
 
 
-model = model.to(device)
+model = model.to(
+    device
+)
 
 
 # ============================================================
-# LOSS + OPTIMIZER
+# LOSS / OPTIMIZER
 # ============================================================
 
 criterion = nn.CrossEntropyLoss()
 
-optimizer = torch.optim.Adam(
+
+optimizer = torch.optim.AdamW(
     model.parameters(),
-    lr=LEARNING_RATE
+    lr=LEARNING_RATE,
+    weight_decay=0.0001
 )
 
 
 # ============================================================
-# TRAINING FUNCTION
-# ============================================================
-
-def train_one_epoch():
-
-    model.train()
-
-    running_loss = 0.0
-
-    correct = 0
-    total = 0
-
-    for images, labels in train_loader:
-
-        images = images.to(device)
-        labels = labels.to(device)
-
-        optimizer.zero_grad()
-
-        outputs = model(images)
-
-        loss = criterion(
-            outputs,
-            labels
-        )
-
-        loss.backward()
-
-        optimizer.step()
-
-        running_loss += (
-            loss.item() *
-            images.size(0)
-        )
-
-        _, predicted = torch.max(
-            outputs,
-            1
-        )
-
-        total += labels.size(0)
-
-        correct += (
-            predicted == labels
-        ).sum().item()
-
-    epoch_loss = (
-        running_loss /
-        total
-    )
-
-    epoch_accuracy = (
-        correct /
-        total
-    )
-
-    return epoch_loss, epoch_accuracy
-
-
-# ============================================================
-# VALIDATION FUNCTION
+# EVALUATION FUNCTION
 # ============================================================
 
 def evaluate(loader):
 
     model.eval()
 
-    running_loss = 0.0
+    total_loss = 0.0
 
     correct = 0
+
     total = 0
+
 
     with torch.no_grad():
 
         for images, labels in loader:
 
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.to(
+                device
+            )
 
-            outputs = model(images)
+            labels = labels.to(
+                device
+            )
+
+
+            outputs = model(
+                images
+            )
+
 
             loss = criterion(
                 outputs,
                 labels
             )
 
-            running_loss += (
-                loss.item() *
-                images.size(0)
+
+            total_loss += (
+                loss.item()
+                * images.size(0)
             )
 
-            _, predicted = torch.max(
-                outputs,
-                1
+
+            predictions = (
+                outputs.argmax(
+                    dim=1
+                )
             )
 
-            total += labels.size(0)
 
             correct += (
-                predicted == labels
+                predictions == labels
             ).sum().item()
 
-    epoch_loss = (
-        running_loss /
-        total
-    )
 
-    epoch_accuracy = (
-        correct /
-        total
-    )
+            total += (
+                labels.size(0)
+            )
 
-    return epoch_loss, epoch_accuracy
+
+    if total == 0:
+
+        return 0, 0
+
+
+    return (
+        total_loss / total,
+        correct / total
+    )
 
 
 # ============================================================
-# TRAIN
+# TRAINING
 # ============================================================
 
 print()
@@ -631,45 +588,169 @@ print("TRAINING")
 print("=" * 60)
 
 print()
-print("Epochs:", EPOCHS)
-print("Batch size:", BATCH_SIZE)
-print("Learning rate:", LEARNING_RATE)
-print("Device:", device)
+print(
+    f"Epochs: {EPOCHS}"
+)
+
+print(
+    f"Batch size: {BATCH_SIZE}"
+)
+
+print(
+    f"Learning rate: {LEARNING_RATE}"
+)
+
+print(
+    f"Device: {device}"
+)
 
 
-for epoch in range(EPOCHS):
+best_val_accuracy = 0.0
 
-    train_loss, train_accuracy = (
-        train_one_epoch()
+best_state = None
+
+
+for epoch in range(
+    EPOCHS
+):
+
+    model.train()
+
+
+    running_loss = 0.0
+
+    correct = 0
+
+    total = 0
+
+
+    for images, labels in train_loader:
+
+        images = images.to(
+            device
+        )
+
+        labels = labels.to(
+            device
+        )
+
+
+        optimizer.zero_grad()
+
+
+        outputs = model(
+            images
+        )
+
+
+        loss = criterion(
+            outputs,
+            labels
+        )
+
+
+        loss.backward()
+
+
+        optimizer.step()
+
+
+        running_loss += (
+            loss.item()
+            * images.size(0)
+        )
+
+
+        predictions = (
+            outputs.argmax(
+                dim=1
+            )
+        )
+
+
+        correct += (
+            predictions == labels
+        ).sum().item()
+
+
+        total += (
+            labels.size(0)
+        )
+
+
+    train_loss = (
+        running_loss / total
     )
+
+    train_accuracy = (
+        correct / total
+    )
+
 
     val_loss, val_accuracy = (
-        evaluate(val_loader)
+        evaluate(
+            val_loader
+        )
     )
 
-    print()
 
+    print()
     print(
         f"Epoch {epoch + 1}/{EPOCHS}"
     )
 
     print(
-        f"Train Loss: {train_loss:.4f}"
+        f"Train Loss: "
+        f"{train_loss:.4f}"
     )
 
     print(
         f"Train Accuracy: "
-        f"{train_accuracy * 100:.2f}%"
+        f"{train_accuracy:.2%}"
     )
 
     print(
-        f"Val Loss: {val_loss:.4f}"
+        f"Val Loss: "
+        f"{val_loss:.4f}"
     )
 
     print(
         f"Val Accuracy: "
-        f"{val_accuracy * 100:.2f}%"
+        f"{val_accuracy:.2%}"
     )
+
+
+    # --------------------------------------------------------
+    # En iyi modeli sakla
+    # --------------------------------------------------------
+
+    if val_accuracy > best_val_accuracy:
+
+        best_val_accuracy = (
+            val_accuracy
+        )
+
+        best_state = {
+            key: value.cpu().clone()
+            for key, value
+            in model.state_dict().items()
+        }
+
+
+# ============================================================
+# BEST MODEL'I GERİ YÜKLE
+# ============================================================
+
+if best_state is not None:
+
+    model.load_state_dict(
+        best_state
+    )
+
+
+model = model.to(
+    device
+)
 
 
 # ============================================================
@@ -682,56 +763,70 @@ print("TEST")
 print("=" * 60)
 
 
-test_loss, test_accuracy = evaluate(
-    test_loader
+test_loss, test_accuracy = (
+    evaluate(
+        test_loader
+    )
 )
 
 
 print(
-    f"Test Loss: {test_loss:.4f}"
+    f"Test Loss: "
+    f"{test_loss:.4f}"
 )
 
 print(
     f"Test Accuracy: "
-    f"{test_accuracy * 100:.2f}%"
+    f"{test_accuracy:.2%}"
 )
 
 
 # ============================================================
-# SAVE MODEL
+# MODEL KAYDET
 # ============================================================
 
-models_dir = source_dir / "models"
+model_output = (
+    Path(__file__).resolve().parent.parent
+    / "models"
+    / MODEL_NAME
+)
 
-models_dir.mkdir(
+
+model_output.parent.mkdir(
     parents=True,
     exist_ok=True
 )
 
 
-model_path = (
-    models_dir /
-    "shoe_classifier.pth"
-)
-
-
-torch.save({
-
+checkpoint = {
     "model_state_dict":
         model.state_dict(),
 
     "classes":
         train_dataset.classes,
 
-    "class_to_idx":
-        train_dataset.class_to_idx
+    "num_classes":
+        num_classes,
 
-}, model_path)
+    "image_size":
+        IMAGE_SIZE,
+
+    "model":
+        "resnet18",
+
+    "best_val_accuracy":
+        best_val_accuracy,
+
+    "test_accuracy":
+        test_accuracy
+}
 
 
-# ============================================================
-# SUMMARY
-# ============================================================
+torch.save(
+    checkpoint,
+    model_output
+)
+
 
 print()
 print("=" * 60)
@@ -745,14 +840,17 @@ print(
 )
 
 print(
-    model_path
+    model_output
 )
 
 print()
 
 print(
-    f"Final test accuracy: "
-    f"{test_accuracy * 100:.2f}%"
+    f"Best validation accuracy: "
+    f"{best_val_accuracy:.2%}"
 )
 
-print()
+print(
+    f"Final test accuracy: "
+    f"{test_accuracy:.2%}"
+)

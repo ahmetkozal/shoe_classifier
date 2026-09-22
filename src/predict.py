@@ -1,4 +1,5 @@
 from pathlib import Path
+import csv
 
 import torch
 from PIL import Image
@@ -7,40 +8,96 @@ import torch.nn as nn
 
 
 # ============================================================
+# SETTINGS
+# ============================================================
+
+IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp"
+}
+
+LOW_CONFIDENCE = 0.70
+
+
+# ============================================================
 # DEVICE
 # ============================================================
 
 if torch.cuda.is_available():
+
     device = torch.device("cuda")
+
+    print()
+    print(
+        "Using GPU:",
+        torch.cuda.get_device_name(0)
+    )
+
 else:
+
     device = torch.device("cpu")
+
+    print()
+    print("Using CPU.")
 
 
 # ============================================================
-# ASK FOR PATHS
+# INPUT
 # ============================================================
 
 model_path = Path(
-    input("Model dosyasının yolunu gir: ").strip()
+    input("\nModel dosyasının yolunu gir: ").strip()
 )
 
-image_path = Path(
-    input("Test fotoğrafının yolunu gir: ").strip()
+source_dir = Path(
+    input("Fotoğraf klasörünün yolunu gir: ").strip()
 )
 
 
 if not model_path.exists():
 
-    print()
-    print("Hata: Model dosyası bulunamadı.")
+    print("\nHata: Model dosyası bulunamadı.")
     exit()
 
 
-if not image_path.exists():
+if not source_dir.exists():
 
-    print()
-    print("Hata: Fotoğraf bulunamadı.")
+    print("\nHata: Fotoğraf klasörü bulunamadı.")
     exit()
+
+
+# ============================================================
+# FIND IMAGES
+# ============================================================
+
+images = sorted(
+    [
+        path
+        for path in source_dir.iterdir()
+        if (
+            path.is_file()
+            and path.suffix.lower()
+            in IMAGE_EXTENSIONS
+        )
+    ]
+)
+
+
+if not images:
+
+    print(
+        "\nBu klasörde desteklenen fotoğraf bulunamadı."
+    )
+
+    exit()
+
+
+print()
+print(
+    f"{len(images)} fotoğraf bulundu."
+)
 
 
 # ============================================================
@@ -50,10 +107,12 @@ if not image_path.exists():
 print()
 print("Loading model...")
 
+
 checkpoint = torch.load(
     model_path,
     map_location=device
 )
+
 
 classes = checkpoint["classes"]
 
@@ -79,7 +138,7 @@ model.eval()
 
 
 # ============================================================
-# IMAGE TRANSFORM
+# TRANSFORM
 # ============================================================
 
 transform = transforms.Compose([
@@ -104,118 +163,237 @@ transform = transforms.Compose([
 
 
 # ============================================================
-# LOAD IMAGE
+# CSV
 # ============================================================
 
-image = Image.open(
-    image_path
-).convert("RGB")
+csv_path = source_dir / "predictions.csv"
 
 
-image_tensor = transform(
-    image
-).unsqueeze(0)
-
-image_tensor = image_tensor.to(device)
+results = []
 
 
 # ============================================================
-# PREDICTION
-# ============================================================
-
-with torch.no_grad():
-
-    outputs = model(
-        image_tensor
-    )
-
-    probabilities = torch.softmax(
-        outputs,
-        dim=1
-    )
-
-    confidence, prediction = torch.max(
-        probabilities,
-        1
-    )
-
-
-predicted_class = classes[
-    prediction.item()
-]
-
-confidence_value = (
-    confidence.item() * 100
-)
-
-
-# ============================================================
-# TOP 5
-# ============================================================
-
-top_count = min(
-    5,
-    len(classes)
-)
-
-top_probabilities, top_indices = (
-    torch.topk(
-        probabilities,
-        top_count
-    )
-)
-
-
-# ============================================================
-# RESULT
+# PREDICT
 # ============================================================
 
 print()
-print("=" * 60)
-print("PREDICTION")
-print("=" * 60)
-
-print()
-
-print(
-    "Image:",
-    image_path.name
-)
-
-print()
-
-print(
-    "Prediction:",
-    predicted_class
-)
-
-print(
-    f"Confidence: {confidence_value:.2f}%"
-)
+print("=" * 70)
+print("PREDICTIONS")
+print("=" * 70)
 
 
-print()
-print("Top predictions:")
-print("-" * 60)
-
-
-for probability, index in zip(
-    top_probabilities[0],
-    top_indices[0]
+for number, image_path in enumerate(
+    images,
+    start=1
 ):
 
-    class_name = classes[
-        index.item()
-    ]
+    try:
 
-    percentage = (
-        probability.item() * 100
-    )
+        image = Image.open(
+            image_path
+        ).convert("RGB")
 
-    print(
-        f"{class_name:<35} "
-        f"{percentage:>6.2f}%"
+        image_tensor = transform(
+            image
+        ).unsqueeze(0)
+
+        image_tensor = image_tensor.to(
+            device
+        )
+
+
+        with torch.no_grad():
+
+            outputs = model(
+                image_tensor
+            )
+
+            probabilities = torch.softmax(
+                outputs,
+                dim=1
+            )
+
+            confidence, prediction = (
+                torch.max(
+                    probabilities,
+                    1
+                )
+            )
+
+
+        predicted_class = classes[
+            prediction.item()
+        ]
+
+        confidence_value = (
+            confidence.item()
+        )
+
+
+        results.append({
+
+            "filename":
+                image_path.name,
+
+            "prediction":
+                predicted_class,
+
+            "confidence":
+                confidence_value
+
+        })
+
+
+        warning = ""
+
+        if confidence_value < LOW_CONFIDENCE:
+
+            warning = "  <-- LOW CONFIDENCE"
+
+
+        print(
+            f"[{number:>4}/{len(images)}] "
+            f"{image_path.name:<35} "
+            f"{predicted_class:<30} "
+            f"{confidence_value * 100:>6.2f}%"
+            f"{warning}"
+        )
+
+
+    except Exception as error:
+
+        print()
+        print(
+            f"HATA: {image_path.name}"
+        )
+
+        print(error)
+
+
+# ============================================================
+# SAVE CSV
+# ============================================================
+
+with open(
+    csv_path,
+    "w",
+    newline="",
+    encoding="utf-8-sig"
+) as file:
+
+    writer = csv.writer(file)
+
+    writer.writerow([
+        "filename",
+        "prediction",
+        "confidence"
+    ])
+
+
+    for result in results:
+
+        writer.writerow([
+            result["filename"],
+            result["prediction"],
+            f"{result['confidence']:.4f}"
+        ])
+
+
+# ============================================================
+# SUMMARY
+# ============================================================
+
+print()
+print("=" * 70)
+print("SUMMARY")
+print("=" * 70)
+
+
+print()
+print(
+    "Processed:",
+    len(results)
+)
+
+
+low_confidence_results = [
+    result
+    for result in results
+    if result["confidence"] < LOW_CONFIDENCE
+]
+
+
+print(
+    "Low confidence:",
+    len(low_confidence_results)
+)
+
+
+print()
+print(
+    "CSV saved to:"
+)
+
+print(
+    csv_path
+)
+
+
+# ============================================================
+# CLASS COUNTS
+# ============================================================
+
+class_counts = {}
+
+
+for result in results:
+
+    class_name = result["prediction"]
+
+    class_counts[class_name] = (
+        class_counts.get(
+            class_name,
+            0
+        ) + 1
     )
 
 
 print()
+print("Predicted class counts:")
+print("-" * 70)
+
+
+for class_name in sorted(
+    class_counts
+):
+
+    print(
+        f"{class_name:<35}"
+        f"{class_counts[class_name]:>6}"
+    )
+
+
+# ============================================================
+# LOW CONFIDENCE LIST
+# ============================================================
+
+if low_confidence_results:
+
+    print()
+    print("=" * 70)
+    print("LOW CONFIDENCE IMAGES")
+    print("=" * 70)
+
+
+    for result in low_confidence_results:
+
+        print(
+            f"{result['filename']:<40}"
+            f"{result['prediction']:<30}"
+            f"{result['confidence'] * 100:>6.2f}%"
+        )
+
+
+print()
+print("Done.")
+
